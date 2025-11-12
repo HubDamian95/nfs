@@ -1,0 +1,74 @@
+/*
+  Live tracing of NFSv4 GET_FACL calls on the client
+  Compatible with older bpftrace versions (Ubuntu 24.04)
+*/
+
+/* Minimal struct definitions for bpftrace */
+struct posix_acl_entry {
+    unsigned short e_tag;
+    unsigned short e_perm;
+    unsigned int e_id;
+};
+
+struct posix_acl {
+    int a_count;
+    struct posix_acl_entry a_entries[4];  // only first 4 entries
+};
+
+struct nfs4_getacl_res {
+    int status;
+    int acl_len;
+    struct posix_acl *acl;
+};
+
+/* Probe the NFSv4 client GET_FACL function */
+kprobe:nfs4_proc_get_acl
+{
+    @acl_count[pid, comm] = count();
+
+    $res = (struct nfs4_getacl_res *)arg1;
+    $acl = $res->acl;
+
+    printf("PID %d (%s) called nfs4_proc_get_acl, res ptr=%p, acl_len=%d\n",
+           pid, comm, arg1, $res->acl_len);
+
+    /* explicit pointer check required in bpftrace */
+    if ($acl != 0) {
+        printf("  ACL entries count=%d\n", $acl->a_count);
+
+        if ($acl->a_count > 0) {
+            printf("    entry[0]: tag=%d perm=%o id=%d\n",
+                   $acl->a_entries[0].e_tag,
+                   $acl->a_entries[0].e_perm,
+                   $acl->a_entries[0].e_id);
+        }
+
+        if ($acl->a_count > 1) {
+            printf("    entry[1]: tag=%d perm=%o id=%d\n",
+                   $acl->a_entries[1].e_tag,
+                   $acl->a_entries[1].e_perm,
+                   $acl->a_entries[1].e_id);
+        }
+
+        if ($acl->a_count > 2) {
+            printf("    entry[2]: tag=%d perm=%o id=%d\n",
+                   $acl->a_entries[2].e_tag,
+                   $acl->a_entries[2].e_perm,
+                   $acl->a_entries[2].e_id);
+        }
+
+        if ($acl->a_count > 3) {
+            printf("    entry[3]: tag=%d perm=%o id=%d\n",
+                   $acl->a_entries[3].e_tag,
+                   $acl->a_entries[3].e_perm,
+                   $acl->a_entries[3].e_id);
+        }
+    }
+}
+
+/* Summary at the end */
+END
+{
+    printf("\nSummary of GETACL calls:\n");
+    print(@acl_count);
+}
