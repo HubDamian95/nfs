@@ -1,4 +1,3 @@
-// nfs_acl_flush.c
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -8,45 +7,45 @@
 #include <linux/uaccess.h>
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("hubertd");
+MODULE_AUTHOR("hubdamian95");
 MODULE_DESCRIPTION("Invalidate NFSv4 ACL cache for a given file");
 MODULE_VERSION("0.1");
 
 /* Module parameter: path to the file to flush ACL */
-static char *file_path = NULL;
-module_param(file_path, charp, 0644);
-MODULE_PARM_DESC(file_path, "File path to flush NFSv4 ACL cache");
+static char *target_file = NULL;
+module_param(target_file, charp, 0644);
+MODULE_PARM_DESC(target_file, "File path to flush NFSv4 ACL cache");
 
 static int __init nfs_acl_flush_init(void)
 {
     struct path path;
     struct inode *inode;
 
-    if (!file_path) {
-        pr_err("No file_path specified\n");
+    if (!target_file) {
+        pr_err("nfs_acl_flush: No target_file specified\n");
         return -EINVAL;
     }
 
-    pr_info("nfs_acl_flush: flushing ACL cache for %s\n", file_path);
+    pr_info("nfs_acl_flush: flushing ACL cache for %s\n", target_file);
 
-    if (kern_path(file_path, LOOKUP_FOLLOW, &path) != 0) {
-        pr_err("Failed to resolve path %s\n", file_path);
+    if (kern_path(target_file, LOOKUP_FOLLOW, &path) != 0) {
+        pr_err("nfs_acl_flush: Failed to resolve path %s\n", target_file);
         return -ENOENT;
     }
 
     inode = path.dentry->d_inode;
     if (!inode) {
-        pr_err("Got NULL inode for %s\n", file_path);
+        pr_err("nfs_acl_flush: Got NULL inode for %s\n", target_file);
         path_put(&path);
         return -ENOENT;
     }
 
-    /* Invalidate cached ACL */
 #ifdef CONFIG_NFS_V4
+    /* Reset cached ACL for this inode */
     nfs_inode_reset_acl(inode);
-    pr_info("ACL cache invalidated for %s\n", file_path);
+    pr_info("nfs_acl_flush: ACL cache invalidated for %s\n", target_file);
 #else
-    pr_err("NFSv4 not compiled in this kernel\n");
+    pr_err("nfs_acl_flush: NFSv4 not compiled in this kernel\n");
 #endif
 
     path_put(&path);
@@ -60,3 +59,4 @@ static void __exit nfs_acl_flush_exit(void)
 
 module_init(nfs_acl_flush_init);
 module_exit(nfs_acl_flush_exit);
+
