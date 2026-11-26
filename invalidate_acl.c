@@ -1,62 +1,82 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * invalidate_acl - drop the NFS client's cached ACL for one file.
+ *
+ * Loading the module with target_file=<path on an NFS mount> calls the NFS
+ * client's own nfs_zap_acl_cache() for that file's inode. The next ACL read
+ * (getxattr system.nfs4_acl, nfs4_getfacl, ...) then has to ask the server
+ * instead of answering from the cache. Unload it with rmmod when done.
+ *
+ * nfs_zap_acl_cache() is EXPORT_SYMBOL_GPL in nfs.ko. It is declared in
+ * fs/nfs/internal.h, which kernel headers do not install, so it is declared
+ * here. Checked against Linux v6.8.
+ */
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/fs.h>
 #include <linux/namei.h>
+#include <linux/magic.h>
 #include <linux/nfs_fs.h>
-#include <linux/uaccess.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("hubdamian95");
-MODULE_DESCRIPTION("Invalidate NFSv4 ACL cache for a given file");
-MODULE_VERSION("0.1");
+MODULE_DESCRIPTION("Invalidate the NFSv4 ACL cache for a given file");
+MODULE_VERSION("0.2");
 
-/* Module parameter: path to the file to flush ACL */
-static char *target_file = NULL;
-module_param(target_file, charp, 0644);
-MODULE_PARM_DESC(target_file, "File path to flush NFSv4 ACL cache");
+extern void nfs_zap_acl_cache(struct inode *inode);
+
+static char *target_file;
+module_param(target_file, charp, 0444);
+MODULE_PARM_DESC(target_file, "Path of a file on an NFSv4 mount whose ACL cache to flush");
 
 static int __init nfs_acl_flush_init(void)
 {
-    struct path path;
-    struct inode *inode;
+	struct path path;
+	struct inode *inode;
+	int err;
 
-    if (!target_file) {
-        pr_err("nfs_acl_flush: No target_file specified\n");
-        return -EINVAL;
-    }
+	if (!target_file) {
+		pr_err("nfs_acl_flush: no target_file specified\n");
+		return -EINVAL;
+	}
 
-    pr_info("nfs_acl_flush: flushing ACL cache for %s\n", target_file);
+	err = kern_path(target_file, LOOKUP_FOLLOW, &path);
+	if (err) {
+		pr_err("nfs_acl_flush: cannot resolve %s (%d)\n", target_file, err);
+		return err;
+	}
 
-    if (kern_path(target_file, LOOKUP_FOLLOW, &path) != 0) {
-        pr_err("nfs_acl_flush: Failed to resolve path %s\n", target_file);
-        return -ENOENT;
-    }
+	inode = d_inode(path.dentry);
 
-    inode = path.dentry->d_inode;
-    if (!inode) {
-        pr_err("nfs_acl_flush: Got NULL inode for %s\n", target_file);
-        path_put(&path);
-        return -ENOENT;
-    }
+	/*
+	 * NFS_PROTO() reads NFS-specific data from the inode, so make sure
+	 * this really is an NFS inode before touching it.
+	 */
+	if (inode->i_sb->s_magic != NFS_SUPER_MAGIC) {
+		pr_err("nfs_acl_flush: %s is not on an NFS mount\n", target_file);
+		err = -EINVAL;
+		goto out;
+	}
 
-#ifdef CONFIG_NFS_V4
-    /* Reset cached ACL for this inode */
-    nfs_inode_reset_acl(inode);
-    pr_info("nfs_acl_flush: ACL cache invalidated for %s\n", target_file);
-#else
-    pr_err("nfs_acl_flush: NFSv4 not compiled in this kernel\n");
-#endif
+	if (NFS_PROTO(inode)->version != 4) {
+		pr_err("nfs_acl_flush: %s is not on an NFSv4 mount\n", target_file);
+		err = -EINVAL;
+		goto out;
+	}
 
-    path_put(&path);
-    return 0;
+	nfs_zap_acl_cache(inode);
+	pr_info("nfs_acl_flush: ACL cache invalidated for %s\n", target_file);
+
+out:
+	path_put(&path);
+	return err;
 }
 
 static void __exit nfs_acl_flush_exit(void)
 {
-    pr_info("nfs_acl_flush module unloaded\n");
+	pr_info("nfs_acl_flush: module unloaded\n");
 }
 
 module_init(nfs_acl_flush_init);
 module_exit(nfs_acl_flush_exit);
-
